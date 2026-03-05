@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "appId": "sample-app",
+  "screens": [
+    {
+      "id": "screen_home",
+      "name": "Home",
+      "layout": {
+        "id": "root_home",
+        "type": "View",
+        "props": {},
+        "style": { "flex": 1, "backgroundColor": "#ffffff" },
+        "children": [
+          {
+            "id": "text_hello",
+            "type": "Text",
+            "props": { "content": "Hello, World!" },
+            "style": { "fontSize": 24, "fontWeight": "bold" }
+          },
+          {
+            "id": "btn_action",
+            "type": "Button",
+            "props": { "label": "Tap me" },
+            "style": {},
+            "events": {
+              "onPress": { "action": "navigate", "target": "screen_detail" }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "navigation": {
+    "type": "stack",
+    "initialScreen": "screen_home"
+  },
+  "theme": {
+    "primaryColor": "#6366f1",
+    "fontFamily": "Inter"
+  },
+  "dataBindings": {},
+  "assets": []
+}
