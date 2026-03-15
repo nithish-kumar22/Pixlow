@@ -1,16 +1,16 @@
 # FastAPI and server
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
+python-dotenv>=1.0.0
 
 # Database (Aiven PostgreSQL)
 asyncpg>=0.29.0
 sqlalchemy[asyncio]>=2.0.0
 alembic>=1.13.0
 
-# Auth (Clerk JWT validation + webhook verification)
+# Auth (JWT email/password)
 PyJWT[crypto]>=2.8.0
-httpx>=0.26.0
-svix>=1.0.0
+passlib[bcrypt]>=1.7.4
 
 # LLM (OpenAI)
 openai>=1.12.0

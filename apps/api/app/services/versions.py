@@ -34,7 +34,7 @@ async def create_version_for_project(
     result = await db.execute(
         text("""
             INSERT INTO project_versions (project_id, parent_id, ir_snapshot, ir_hash, message, created_at)
-            VALUES (:project_id, :parent_id, :ir_snapshot::jsonb, :ir_hash, :message, now())
+            VALUES (:project_id, :parent_id, CAST(:ir_snapshot AS jsonb), :ir_hash, :message, now())
             RETURNING id, project_id, ir_snapshot, ir_hash, message, created_at
         """),
         {

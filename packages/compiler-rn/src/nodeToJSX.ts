@@ -51,12 +51,20 @@ export function nodeToJSX(node: LayoutNode, ctx: NodeToJSXContext): string {
     }
     case 'Image': {
       const source = node.props.source;
-      const sourceStr =
-        typeof source === 'string'
-          ? `require('${source}')`
-          : typeof source === 'object' && source && 'uri' in source
-            ? `{ uri: '${String((source as { uri: string }).uri)}' }`
-            : '{ uri: "" }';
+      let sourceStr: string;
+      if (typeof source === 'string') {
+        const s = source.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        if (s.startsWith('http://') || s.startsWith('https://')) {
+          sourceStr = `{ uri: '${s}' }`;
+        } else {
+          sourceStr = `require('${s}')`;
+        }
+      } else if (typeof source === 'object' && source && 'uri' in source) {
+        const uri = String((source as { uri: string }).uri).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        sourceStr = `{ uri: '${uri}' }`;
+      } else {
+        sourceStr = '{ uri: "" }';
+      }
       return `<Image${keyAttr} source={${sourceStr}} style={${styleStr}} />`;
     }
     case 'Button': {

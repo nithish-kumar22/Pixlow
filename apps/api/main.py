@@ -1,16 +1,21 @@
 """
 FastAPI application for Prompt to App.
-M03: Minimal app with Clerk webhook for user sync.
-M04: Adds auth dependency, projects, versions, generation.
+Auth: JWT email/password (register, login). Protected routes use get_current_user_id.
 """
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from repo root so DATABASE_URL etc. are set when running from apps/api
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_env_path)
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.routers import generation, projects, versions
-from app.webhooks import router as webhooks_router
+from app.routers import auth, generation, projects, versions
 
 app = FastAPI(title="Prompt to App API", version="0.1.0")
 
@@ -51,7 +56,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(webhooks_router, prefix="/webhooks", tags=["webhooks"])
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/projects", tags=["projects"])
 app.include_router(versions.router, tags=["versions"])
 app.include_router(generation.router, tags=["generation"])

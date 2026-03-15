@@ -1,57 +1,56 @@
 """
-Clerk JWT verification and current-user dependency for protected routes.
-Validates Bearer token via Clerk JWKS; resolves to internal user id from users table.
+JWT verification and current-user dependency for protected routes.
+Validates Bearer token (HS256, JWT_SECRET); sub claim is user UUID.
 """
 import os
-import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import jwt
 from fastapi import Header, HTTPException
-from jwt import PyJWKClient
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal
-
-# Cache JWKS for 1 hour; Clerk rotates keys rarely
-_JWKS_CACHE: dict[str, tuple[PyJWKClient, float]] = {}
-_CACHE_TTL_SEC = 3600
+_JWT_ALGORITHM = "HS256"
+_TOKEN_EXPIRY_HOURS = 24 * 7  # 7 days
 
 
-def _get_jwks_url() -> str:
-    url = os.getenv("CLERK_JWKS_URL", "").strip()
-    if not url:
-        raise HTTPException(
-            status_code=500,
-            detail="CLERK_JWKS_URL not configured",
-        )
-    return url
+_DEV_SECRET_WARNED = False
 
 
-def _get_jwks_client() -> PyJWKClient:
-    url = _get_jwks_url()
-    now = time.monotonic()
-    if url in _JWKS_CACHE:
-        client, cached_at = _JWKS_CACHE[url]
-        if now - cached_at < _CACHE_TTL_SEC:
-            return client
-    client = PyJWKClient(url)
-    _JWKS_CACHE[url] = (client, now)
-    return client
+def _get_jwt_secret() -> str:
+    secret = os.getenv("JWT_SECRET", "").strip()
+    if not secret:
+        global _DEV_SECRET_WARNED
+        if not _DEV_SECRET_WARNED:
+            import warnings
+            warnings.warn("JWT_SECRET is not set; using a development default. Set JWT_SECRET in .env for production.", UserWarning, stacklevel=2)
+            _DEV_SECRET_WARNED = True
+        secret = "dev-secret-change-in-production"
+    return secret
+
+
+def create_access_token(user_id: uuid.UUID, email: str | None = None) -> str:
+    """Create a JWT with sub=user_id, exp, optional email."""
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=_TOKEN_EXPIRY_HOURS),
+    }
+    if email is not None:
+        payload["email"] = email
+    return jwt.encode(
+        payload,
+        _get_jwt_secret(),
+        algorithm=_JWT_ALGORITHM,
+    )
 
 
 def _verify_token(token: str) -> dict:
-    """Verify Clerk JWT and return payload. Raises on invalid token."""
+    """Verify JWT and return payload. Raises on invalid token."""
     try:
-        jwks_client = _get_jwks_client()
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload = jwt.decode(
             token,
-            signing_key.key,
-            algorithms=["RS256"],
-            options={"verify_aud": False},
+            _get_jwt_secret(),
+            algorithms=[_JWT_ALGORITHM],
         )
         return payload
     except jwt.PyJWTError as e:
@@ -66,8 +65,8 @@ async def get_current_user_id(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> uuid.UUID:
     """
-    Extract Bearer token, verify with Clerk JWKS, resolve to internal user id.
-    Raises 401 if missing, invalid, or user not synced to DB.
+    Extract Bearer token, verify with JWT_SECRET, return user id from sub claim.
+    Raises 401 if missing or invalid.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -83,24 +82,18 @@ async def get_current_user_id(
             headers={"WWW-Authenticate": "Bearer"},
         )
     payload = _verify_token(token)
-    clerk_id = payload.get("sub")
-    if not clerk_id:
+    sub = payload.get("sub")
+    if not sub:
         raise HTTPException(
             status_code=401,
             detail="Token missing subject",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            text("SELECT id FROM users WHERE clerk_id = :clerk_id"),
-            {"clerk_id": clerk_id},
-        )
-        row = result.mappings().first()
-        user_id = row["id"] if row else None
-    if user_id is None:
+    try:
+        return uuid.UUID(sub)
+    except ValueError as e:
         raise HTTPException(
             status_code=401,
-            detail="User not found; sign in again or ensure user sync has run",
+            detail="Invalid token subject",
             headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user_id
+        ) from e

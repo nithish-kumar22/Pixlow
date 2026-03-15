@@ -25,8 +25,8 @@ const propsRecordSchema = z.record(z.string(), z.unknown()).default({});
 /** Flexible record for style (e.g. flex, fontSize, color) — each compiler maps as needed */
 const styleRecordSchema = z.record(z.string(), z.unknown()).default({});
 
-/** Events map: e.g. onPress -> { action, target } */
-const eventsSchema = z.record(z.string(), eventPayloadSchema).optional();
+/** Events map: e.g. onPress -> { action, target }. LLM may output null. */
+const eventsSchema = z.union([z.record(z.string(), eventPayloadSchema), z.null()]).optional();
 
 /** Shape of a layout node for recursive schema typing */
 interface LayoutNodeShape {
@@ -34,18 +34,18 @@ interface LayoutNodeShape {
   type: z.infer<typeof layoutNodeTypeEnum>;
   props: Record<string, unknown>;
   style: Record<string, unknown>;
-  children?: LayoutNodeShape[];
-  events?: Record<string, z.infer<typeof eventPayloadSchema>>;
+  children?: LayoutNodeShape[] | null;
+  events?: Record<string, z.infer<typeof eventPayloadSchema>> | null;
 }
 
-/** Recursive layout node: single root per screen, tree of nodes */
+/** Recursive layout node: single root per screen, tree of nodes. children may be null (LLM output). */
 export const layoutNodeSchema = z.lazy(() =>
   z.object({
     id: z.string(),
     type: layoutNodeTypeEnum,
     props: propsRecordSchema,
     style: styleRecordSchema,
-    children: z.array(layoutNodeSchema).optional(),
+    children: z.union([z.array(layoutNodeSchema), z.null()]).optional(),
     events: eventsSchema,
   })
 ) as z.ZodType<LayoutNodeShape>;
@@ -63,16 +63,16 @@ export const navigationSchema = z.object({
   initialScreen: z.string(),
 });
 
-/** Theme: design tokens (primaryColor, fontFamily, etc.) */
+/** Theme: design tokens (primaryColor, fontFamily). LLM may output null. */
 export const themeSchema = z.object({
-  primaryColor: z.string().optional(),
-  fontFamily: z.string().optional(),
+  primaryColor: z.union([z.string(), z.null()]).optional(),
+  fontFamily: z.union([z.string(), z.null()]).optional(),
 });
 
 /** Top-level App IR schema */
 export const appIRSchema = z.object({
   version: z.string(),
-  appId: z.string().optional(),
+  appId: z.union([z.string(), z.null()]).optional(),
   screens: z.array(screenSchema).min(1, 'At least one screen is required'),
   navigation: navigationSchema,
   theme: themeSchema.default({}),
