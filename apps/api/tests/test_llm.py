@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.prompt.system_prompt import get_sample_ir
-from app.services.llm import LLMGenerationError, generate_ir
+from app.services.llm import LLMGenerationError, generate_ir, generate_structured_artifact
 
 
 def _make_completion(content: str) -> MagicMock:
@@ -66,6 +66,24 @@ def test_generate_ir_retries_on_invalid_json(mock_openai_class):
 
     assert result["version"] == "1.0"
     assert mock_client.chat.completions.create.call_count == 2
+
+
+@patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
+@patch("app.services.llm.OpenAI")
+def test_generate_structured_artifact_returns_json(mock_openai_class):
+    mock_client = MagicMock()
+    mock_openai_class.return_value = mock_client
+    mock_client.chat.completions.create.return_value = _make_completion(
+        json.dumps({"summary": "Blueprint ready", "screens": ["Home"]})
+    )
+
+    result = generate_structured_artifact(
+        system_prompt="Return JSON only.",
+        user_message="Describe the app.",
+    )
+
+    assert result["summary"] == "Blueprint ready"
+    assert result["screens"] == ["Home"]
 
 
 def test_generate_ir_raises_when_api_key_missing():
