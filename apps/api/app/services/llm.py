@@ -1,4 +1,4 @@
-"""OpenRouter LLM integration: generate IR from prompt (M08)."""
+"""OpenRouter LLM integration for IR generation and structured agent artifacts."""
 import json
 import logging
 import os
@@ -87,19 +87,13 @@ def _call_llm(client: OpenAI, model_id: str, system_prompt: str, user_message: s
     return content
 
 
-def generate_ir(prompt: str, platform: str) -> dict[str, Any]:
-    """
-    Call OpenRouter with system + user prompt; parse and validate response to AppIR.
-    Retries once on JSON parse failure (with "Return only valid JSON" hint) and
-    once on validation failure (with validation error in user message).
-    Returns validated IR dict. Raises LLMGenerationError or IRValidationError on failure.
-    """
-    model_id = _get_model_id()
-    client = _get_client()
-    system_prompt = build_system_prompt(platform, include_example=True)
-    user_message = format_user_message(prompt, platform)
-
-    # Parse: up to 2 attempts (initial + 1 retry with "Return only valid JSON")
+def _generate_json_with_retries(
+    *,
+    client: OpenAI,
+    model_id: str,
+    system_prompt: str,
+    user_message: str,
+) -> dict[str, Any]:
     current_user_message = user_message
     parsed = None
     for parse_attempt in range(MAX_JSON_RETRIES):
@@ -115,6 +109,42 @@ def generate_ir(prompt: str, platform: str) -> dict[str, Any]:
             raise LLMGenerationError("Generated app structure was invalid; please try again or rephrase your prompt.") from e
 
     assert parsed is not None
+    return parsed
+
+
+def generate_structured_artifact(*, system_prompt: str, user_message: str) -> dict[str, Any]:
+    """Generate a structured JSON artifact for an agent step."""
+    model_id = _get_model_id()
+    client = _get_client()
+    return _generate_json_with_retries(
+        client=client,
+        model_id=model_id,
+        system_prompt=system_prompt,
+        user_message=user_message,
+    )
+
+
+def generate_ir(prompt: str, platform: str, context_sections: list[str] | None = None) -> dict[str, Any]:
+    """
+    Call OpenRouter with system + user prompt; parse and validate response to AppIR.
+    Retries once on JSON parse failure (with "Return only valid JSON" hint) and
+    once on validation failure (with validation error in user message).
+    Returns validated IR dict. Raises LLMGenerationError or IRValidationError on failure.
+    """
+    model_id = _get_model_id()
+    client = _get_client()
+    system_prompt = build_system_prompt(platform, include_example=True)
+    user_message = format_user_message(prompt, platform)
+    if context_sections:
+        user_message = user_message + "\n\nAdditional implementation context:\n" + "\n\n".join(context_sections)
+
+    parsed = _generate_json_with_retries(
+        client=client,
+        model_id=model_id,
+        system_prompt=system_prompt,
+        user_message=user_message,
+    )
+    current_user_message = user_message
 
     # Validate: up to 2 attempts (initial + 1 retry with validation error in user message)
     for validation_attempt in range(MAX_VALIDATION_RETRIES):

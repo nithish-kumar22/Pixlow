@@ -16,7 +16,9 @@ export const layoutNodeTypeEnum = z.enum([
 /** Event handler payload: action (e.g. navigate) and optional target (e.g. screen id) */
 export const eventPayloadSchema = z.object({
   action: z.string(),
-  target: z.string().optional(),
+  // LLM output may explicitly use `null` for optional targets.
+  // Accept both `undefined` (missing) and `null` to avoid validation failures.
+  target: z.union([z.string(), z.null()]).optional(),
 });
 
 /** Flexible record for component props (e.g. content, label, source) */

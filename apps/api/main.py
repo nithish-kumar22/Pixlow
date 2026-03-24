@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.routers import auth, generation, projects, versions
+from app.routers import auth, generation, generation_runs, projects, versions
 
 app = FastAPI(title="Prompt to App API", version="0.1.0")
 
@@ -60,3 +60,4 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/projects", tags=["projects"])
 app.include_router(versions.router, tags=["versions"])
 app.include_router(generation.router, tags=["generation"])
+app.include_router(generation_runs.router, tags=["generation-runs"])

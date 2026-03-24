@@ -1,4 +1,4 @@
-"""Generation endpoint: prompt -> IR. M08: full LLM integration via OpenRouter."""
+"""Generation endpoints for synchronous compatibility and async multi-agent runs."""
 import asyncio
 import uuid
 from typing import Annotated
@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user_id
 from app.database import get_db
 from app.schemas.generation import GenerateRequest, GenerateResponse
-from app.services.llm import LLMGenerationError, generate_ir
-from app.services.versions import create_version_for_project
+from app.services.generation_runs import create_run, get_run
+from app.services.llm import LLMGenerationError
+from app.services.multi_agent import run_generation_pipeline
 
 router = APIRouter()
 
@@ -27,14 +28,18 @@ async def _verify_project_owner(db: AsyncSession, project_id: uuid.UUID, user_id
     return result.mappings().first() is not None
 
 
-async def _get_project_platform(db: AsyncSession, project_id: uuid.UUID) -> str:
-    """Return project platform; default to react-native for MVP."""
+async def _get_project_platform_and_head(
+    db: AsyncSession, project_id: uuid.UUID
+) -> tuple[str, uuid.UUID | None]:
+    """Return project platform and current head version; default to react-native for MVP."""
     result = await db.execute(
-        text("SELECT platform FROM projects WHERE id = :id"),
+        text("SELECT platform, head_version_id FROM projects WHERE id = :id"),
         {"id": project_id},
     )
     row = result.mappings().first()
-    return (row["platform"] or "react-native") if row else "react-native"
+    if not row:
+        return "react-native", None
+    return (row["platform"] or "react-native"), row["head_version_id"]
 
 
 @router.post("/projects/{project_id}/generate", response_model=GenerateResponse)
@@ -62,21 +67,51 @@ async def generate(
             detail=f"Prompt must be at most {PROMPT_MAX_LEN} characters",
         )
 
-    platform = await _get_project_platform(db, project_id)
+    platform, head_version_id = await _get_project_platform_and_head(db, project_id)
+
+    run = await create_run(
+        db,
+        project_id=project_id,
+        owner_id=user_id,
+        prompt=prompt,
+        source_version_id=head_version_id,
+    )
+    await db.commit()
 
     try:
-        ir = await asyncio.to_thread(generate_ir, prompt, platform)
+        completed_run = await run_generation_pipeline(
+            db,
+            run_id=run["id"],
+            project_id=project_id,
+            owner_id=user_id,
+            prompt=prompt,
+            platform=platform,
+        )
     except LLMGenerationError as e:
         detail = str(e)
         if "configuration" in detail or "OPENROUTER" in detail:
             raise HTTPException(status_code=502, detail=detail) from e
         raise HTTPException(status_code=400, detail=detail) from e
+    except Exception as e:
+        detail = str(e) or "Generation failed"
+        raise HTTPException(status_code=400, detail=detail) from e
 
-    created = await create_version_for_project(db, project_id, ir, message="Initial generation")
-    await db.commit()
+    result_version_id = completed_run.get("result_version_id")
+    artifacts = completed_run.get("artifacts", [])
+    final_ir = next((item["content"] for item in artifacts if item.get("artifact_type") == "final_ir"), None)
+    if final_ir is None:
+        refreshed_run = await get_run(db, run["id"], user_id)
+        artifacts = refreshed_run.get("artifacts", []) if refreshed_run else []
+        final_ir = next((item["content"] for item in artifacts if item.get("artifact_type") == "final_ir"), None)
+    if final_ir is None:
+        raise HTTPException(status_code=500, detail="Generation completed without a saved IR")
 
     return GenerateResponse(
-        ir=ir,
-        version_id=created["id"],
-        created_at=created["created_at"],
+        ir=final_ir,
+        version_id=result_version_id,
+        created_at=completed_run.get("completed_at"),
+        run_id=completed_run["id"],
+        status=completed_run["status"],
+        stage=completed_run["current_stage"],
+        steps=completed_run.get("steps", []),
     )
