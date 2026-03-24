@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +32,8 @@ from app.services.llm import LLMGenerationError, generate_ir, generate_structure
 from app.services.versions import create_version_for_project
 
 logger = logging.getLogger(__name__)
+
+AGENT_ARTIFACT_VALIDATION_MAX_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,7 @@ def _build_system_prompt(role: str, model_cls: type) -> str:
     guidance = [
         role_map.get(role, "You are a specialist agent in a mobile app generation workflow."),
         "Return only valid JSON. No markdown. No prose outside the JSON object.",
+        "The JSON schema below is for reference only. Do not echo the schema (do not include `$defs`).",
         "Be concrete and implementation-oriented. Align to the existing React Native IR-first architecture.",
         "Do not invent unsupported UI components beyond the known React Native IR catalog.",
         "Use concise, high-signal values. Prefer short strings and arrays over paragraphs.",
@@ -127,7 +131,7 @@ async def _record_debug_failure(
     error: Exception,
 ) -> None:
     message = str(error) or error.__class__.__name__
-    retryable = isinstance(error, LLMGenerationError)
+    retryable = isinstance(error, (LLMGenerationError, ValidationError))
     debug_content = DebugSpec(
         summary="The multi-agent run failed and needs corrective action.",
         issue=message,
@@ -228,17 +232,41 @@ async def run_generation_pipeline(
             )
             await db.commit()
 
-            raw_artifact = await asyncio.to_thread(
-                generate_structured_artifact,
-                system_prompt=_build_system_prompt(agent.role, agent.model_cls),
-                user_message=_build_user_message(
-                    prompt=prompt,
-                    platform=platform,
-                    context_sections=context_sections,
-                    role=agent.role,
-                ),
+            system_prompt = _build_system_prompt(agent.role, agent.model_cls)
+            base_user_message = _build_user_message(
+                prompt=prompt,
+                platform=platform,
+                context_sections=context_sections,
+                role=agent.role,
             )
-            artifact = agent.model_cls.model_validate(raw_artifact).model_dump()
+
+            last_validation_error: ValidationError | None = None
+            for attempt in range(AGENT_ARTIFACT_VALIDATION_MAX_ATTEMPTS):
+                user_message = base_user_message
+                if attempt > 0 and last_validation_error is not None:
+                    user_message = (
+                        base_user_message
+                        + "\n\nPrevious validation error for this artifact:\n"
+                        + str(last_validation_error)
+                        + "\n\nReturn only a corrected JSON object that matches the schema."
+                        + " Do not echo the schema or include `$defs`."
+                        + " Ensure all required top-level fields are present."
+                    )
+
+                raw_artifact = await asyncio.to_thread(
+                    generate_structured_artifact,
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                )
+                try:
+                    artifact = agent.model_cls.model_validate(raw_artifact).model_dump()
+                    last_validation_error = None
+                    break
+                except ValidationError as e:
+                    last_validation_error = e
+                    if attempt >= AGENT_ARTIFACT_VALIDATION_MAX_ATTEMPTS - 1:
+                        raise
+
             summary = _artifact_summary(artifact)
             await create_artifact(
                 db,

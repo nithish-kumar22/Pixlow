@@ -42,6 +42,32 @@ describe('validateIR', () => {
     expect(result.navigation.type).toBe('stack');
   });
 
+  it('accepts events.onPress.target=null', () => {
+    const ir = {
+      version: '1.0',
+      screens: [
+        {
+          id: 's1',
+          name: 'Main',
+          layout: {
+            id: 'root',
+            type: 'View',
+            props: {},
+            style: {},
+            events: {
+              onPress: { action: 'navigate', target: null },
+            },
+            children: null,
+          },
+        },
+      ],
+      navigation: { type: 'stack' as const, initialScreen: 's1' },
+      theme: {},
+    };
+
+    expect(() => validateIR(ir)).not.toThrow();
+  });
+
   it('throws on missing required field (version)', () => {
     const invalid = {
       screens: [
