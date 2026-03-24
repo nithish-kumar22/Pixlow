@@ -2,6 +2,9 @@
 
 Generate mobile apps from natural-language prompts. One-line: **Describe your app, get React Native (Expo) code and live preview.**
 
+<img width="1919" height="928" alt="image" src="https://github.com/user-attachments/assets/7f59b3a8-3860-4eaf-b67b-f8e88183ea25" />
+
+
 ## Features
 
 - **Prompt → App** — Enter a natural-language description; the LLM returns an IR (Intermediate Representation) and the compiler emits React Native (Expo) code.
